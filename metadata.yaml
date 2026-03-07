@@ -1,7 +1,7 @@
 name: astrbot_plugin_mail_notify
 display_name: 📬 邮件通知
-desc: 监控邮箱新邮件并通过 QQ 私聊发送通知，支持 Gmail、杭电邮箱等任何 IMAP 邮箱
-version: v1.0.0
-author: YourName
+desc: 监控邮箱新邮件并通过消息平台发送通知，支持 Gmail、杭电邮箱等任何 IMAP 邮箱
+version: v1.0.3
+author: gangcaiyoule
 repo: https://github.com/YourName/astrbot_plugin_mail_notify
 astrbot_version: ">=4.10.4"

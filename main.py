@@ -1,64 +1,11 @@
 import asyncio
-import email as email_lib
-import imaplib
-import re
 from datetime import datetime, timezone
-from email.header import decode_header
-from email.utils import parseaddr, parsedate_to_datetime
 
 from astrbot.api import AstrBotConfig, logger
-from astrbot.api.event import MessageChain, AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
-
-def _decode_mime_header(value: str) -> str:
-    """Decode MIME encoded header value to plain string."""
-    if not value:
-        return ""
-    parts = decode_header(value)
-    decoded = []
-    for part, charset in parts:
-        if isinstance(part, bytes):
-            decoded.append(part.decode(charset or "utf-8", errors="replace"))
-        else:
-            decoded.append(part)
-    return "".join(decoded)
-
-
-def _extract_text_body(msg, max_length: int = 500) -> str:
-    """Extract plain text body from email message."""
-    body = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            ctype = part.get_content_type()
-            if ctype == "text/plain":
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    body = payload.decode(charset, errors="replace")
-                    break
-            elif ctype == "text/html" and not body:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    html = payload.decode(charset, errors="replace")
-                    # Simple HTML tag stripping
-                    body = re.sub(r"<[^>]+>", "", html)
-                    body = re.sub(r"\s+", " ", body).strip()
-    else:
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            text = payload.decode(charset, errors="replace")
-            if msg.get_content_type() == "text/html":
-                text = re.sub(r"<[^>]+>", "", text)
-                text = re.sub(r"\s+", " ", text).strip()
-            body = text
-
-    body = body.strip()
-    if len(body) > max_length:
-        body = body[:max_length] + "..."
-    return body
+from .imap_client import imap_fetch_new, imap_query_since, is_recent_email
 
 
 @register(
@@ -101,8 +48,8 @@ class MailNotifyPlugin(Star):
                             logger.error(
                                 f"MailNotify: check failed for {account['email']}: {e}"
                             )
-                        self._last_check_time[account["email"]] = datetime.now().strftime(
-                            "%Y-%m-%d %H:%M:%S"
+                        self._last_check_time[account["email"]] = (
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         )
                 await asyncio.sleep(max(interval, 1) * 60)
             except asyncio.CancelledError:
@@ -124,12 +71,11 @@ class MailNotifyPlugin(Star):
 
         is_first_run = not init_time
         if is_first_run:
-            # Record the plugin init time for this account
             init_time = datetime.now(timezone.utc).isoformat()
             await self.put_kv_data(init_key, init_time)
 
         new_emails, new_max_uid = await asyncio.to_thread(
-            self._imap_fetch_new, account, last_uid, max_body_len
+            imap_fetch_new, account, last_uid, max_body_len
         )
 
         if new_max_uid > last_uid:
@@ -142,123 +88,10 @@ class MailNotifyPlugin(Star):
                 )
             return
 
-        # Filter out old emails synced with new UIDs
         init_dt = datetime.fromisoformat(init_time)
         for mail_info in new_emails:
-            if self._is_recent_email(mail_info, init_dt):
+            if is_recent_email(mail_info, init_dt):
                 await self._send_notification(account, mail_info, notify_umo)
-
-    @staticmethod
-    def _is_recent_email(mail_info: dict, init_dt: datetime) -> bool:
-        """Check if email date is after init_dt."""
-        date_str = mail_info.get("date_raw", "")
-        if not date_str:
-            return True  # no date info, notify anyway
-        try:
-            mail_dt = datetime.fromisoformat(date_str)
-            # Make both offset-aware for comparison
-            if mail_dt.tzinfo is None:
-                mail_dt = mail_dt.replace(tzinfo=timezone.utc)
-            if init_dt.tzinfo is None:
-                init_dt = init_dt.replace(tzinfo=timezone.utc)
-            return mail_dt >= init_dt
-        except Exception:
-            return True
-
-    def _imap_fetch_new(
-        self, account: dict, last_uid: int, max_body_len: int
-    ) -> tuple[list[dict], int]:
-        """Synchronous IMAP fetch (runs in thread pool via asyncio.to_thread)."""
-        server = account["imap_server"]
-        port = account.get("imap_port", 993)
-        email_addr = account["email"]
-        password = account["password"]
-        use_ssl = account.get("use_ssl", True)
-
-        if use_ssl:
-            conn = imaplib.IMAP4_SSL(server, port, timeout=30)
-        else:
-            conn = imaplib.IMAP4(server, port, timeout=30)
-
-        new_emails: list[dict] = []
-        new_max_uid = last_uid
-
-        try:
-            conn.login(email_addr, password)
-            conn.select("INBOX", readonly=True)
-
-            if last_uid == 0:
-                # First run: just discover the current max UID
-                status, data = conn.uid("search", "ALL")
-                if status == "OK" and data[0]:
-                    uid_list = data[0].split()
-                    if uid_list:
-                        new_max_uid = int(uid_list[-1])
-                return [], new_max_uid
-
-            # Search for emails newer than last_uid
-            status, data = conn.uid("search", f"UID {last_uid + 1}:*")
-            if status != "OK" or not data[0]:
-                return [], last_uid
-
-            uid_list = data[0].split()
-            # IMAP UID search may include boundary, filter strictly
-            uid_list = [u for u in uid_list if int(u) > last_uid]
-            if not uid_list:
-                return [], last_uid
-
-            new_max_uid = max(int(u) for u in uid_list)
-
-            # Limit to latest 10 to avoid flooding
-            for uid in uid_list[-10:]:
-                status, msg_data = conn.uid("fetch", uid, "(RFC822)")
-                if status != "OK" or not msg_data or not msg_data[0]:
-                    continue
-                raw = msg_data[0][1]
-                if not isinstance(raw, bytes):
-                    continue
-
-                msg = email_lib.message_from_bytes(raw)
-                subject = _decode_mime_header(msg.get("Subject", ""))
-                from_raw = msg.get("From", "")
-                from_name, from_addr = parseaddr(from_raw)
-                from_name = _decode_mime_header(from_name) if from_name else from_addr
-
-                # Parse date
-                date_str = msg.get("Date", "")
-                try:
-                    dt = parsedate_to_datetime(date_str)
-                    date_formatted = dt.strftime("%Y-%m-%d %H:%M")
-                except Exception:
-                    date_formatted = date_str[:25] if date_str else "未知"
-
-                body = _extract_text_body(msg, max_body_len)
-
-                # Keep raw ISO date for filtering
-                try:
-                    dt_obj = parsedate_to_datetime(date_str)
-                    date_raw = dt_obj.isoformat()
-                except Exception:
-                    date_raw = ""
-
-                new_emails.append(
-                    {
-                        "uid": int(uid),
-                        "subject": subject or "(无主题)",
-                        "from_name": from_name,
-                        "from_addr": from_addr,
-                        "date": date_formatted,
-                        "date_raw": date_raw,
-                        "body": body,
-                    }
-                )
-        finally:
-            try:
-                conn.logout()
-            except Exception:
-                pass
-
-        return new_emails, new_max_uid
 
     # ── Notification ─────────────────────────────────────────────
 
@@ -292,7 +125,9 @@ class MailNotifyPlugin(Star):
         self, mail_info: dict, notify_umo: str, fallback: str
     ) -> str:
         try:
-            provider_id = await self.context.get_current_chat_provider_id(umo=notify_umo)
+            provider_id = await self.context.get_current_chat_provider_id(
+                umo=notify_umo
+            )
             if not provider_id:
                 return fallback
             prompt = (
@@ -383,7 +218,9 @@ class MailNotifyPlugin(Star):
             yield event.plain_result("✅ 所有邮箱检查完成。")
 
     @filter.command("mail_query")
-    async def mail_query(self, event: AstrMessageEvent, account_name: str, since_date: str):
+    async def mail_query(
+        self, event: AstrMessageEvent, account_name: str, since_date: str
+    ):
         """查询指定邮箱自某日期以来的邮件，如 /mail_query qq邮箱 2026-03-01"""
         accounts = self.config.get("mail_accounts", [])
 
@@ -397,7 +234,7 @@ class MailNotifyPlugin(Star):
                 break
         if not target:
             yield event.plain_result(
-                f"❌ 未找到名为 \"{account_name}\" 的邮箱账户。\n"
+                f'❌ 未找到名为 "{account_name}" 的邮箱账户。\n'
                 f"已配置的账户: {', '.join(a.get('name') or a.get('email', '?') for a in accounts)}"
             )
             return
@@ -406,97 +243,38 @@ class MailNotifyPlugin(Star):
         try:
             since_dt = datetime.strptime(since_date, "%Y-%m-%d")
         except ValueError:
-            yield event.plain_result("❌ 日期格式错误，请使用 YYYY-MM-DD，如 2026-03-01")
+            yield event.plain_result(
+                "❌ 日期格式错误，请使用 YYYY-MM-DD，如 2026-03-01"
+            )
             return
 
-        yield event.plain_result(f"🔍 正在查询 {account_name} 自 {since_date} 以来的邮件...")
+        yield event.plain_result(
+            f"🔍 正在查询 {account_name} 自 {since_date} 以来的邮件..."
+        )
 
         try:
             max_body_len = self.config.get("max_body_length", 500)
             emails = await asyncio.to_thread(
-                self._imap_query_since, target, since_dt, max_body_len
+                imap_query_since, target, since_dt, max_body_len
             )
         except Exception as e:
             yield event.plain_result(f"❌ 查询失败: {e}")
             return
 
         if not emails:
-            yield event.plain_result(f"📭 {account_name} 自 {since_date} 以来没有邮件。")
+            yield event.plain_result(
+                f"📭 {account_name} 自 {since_date} 以来没有邮件。"
+            )
             return
 
-        lines = [f"📬 {account_name} 自 {since_date} 以来共 {len(emails)} 封邮件：", "━━━━━━━━━━━━━━━━"]
+        lines = [
+            f"📬 {account_name} 自 {since_date} 以来共 {len(emails)} 封邮件：",
+            "━━━━━━━━━━━━━━━━",
+        ]
         for i, m in enumerate(emails, 1):
             lines.append(f"{i}. 📋 {m['subject']}")
             lines.append(f"   📤 {m['from_name']}  🕐 {m['date']}")
         yield event.plain_result("\n".join(lines))
-
-    def _imap_query_since(
-        self, account: dict, since_dt: datetime, max_body_len: int
-    ) -> list[dict]:
-        """Query emails from IMAP since a given date."""
-        server = account["imap_server"]
-        port = account.get("imap_port", 993)
-        email_addr = account["email"]
-        password = account["password"]
-        use_ssl = account.get("use_ssl", True)
-
-        if use_ssl:
-            conn = imaplib.IMAP4_SSL(server, port, timeout=30)
-        else:
-            conn = imaplib.IMAP4(server, port, timeout=30)
-
-        results: list[dict] = []
-        try:
-            conn.login(email_addr, password)
-            conn.select("INBOX", readonly=True)
-
-            # IMAP SINCE uses dd-Mon-yyyy format
-            since_str = since_dt.strftime("%d-%b-%Y")
-            status, data = conn.uid("search", f"SINCE {since_str}")
-            if status != "OK" or not data[0]:
-                return []
-
-            uid_list = data[0].split()
-            # Limit to last 20
-            for uid in uid_list[-20:]:
-                status, msg_data = conn.uid("fetch", uid, "(RFC822)")
-                if status != "OK" or not msg_data or not msg_data[0]:
-                    continue
-                raw = msg_data[0][1]
-                if not isinstance(raw, bytes):
-                    continue
-
-                msg = email_lib.message_from_bytes(raw)
-                subject = _decode_mime_header(msg.get("Subject", ""))
-                from_raw = msg.get("From", "")
-                from_name, from_addr = parseaddr(from_raw)
-                from_name = _decode_mime_header(from_name) if from_name else from_addr
-
-                date_str = msg.get("Date", "")
-                try:
-                    dt = parsedate_to_datetime(date_str)
-                    date_formatted = dt.strftime("%Y-%m-%d %H:%M")
-                except Exception:
-                    date_formatted = date_str[:25] if date_str else "未知"
-
-                body = _extract_text_body(msg, max_body_len)
-
-                results.append(
-                    {
-                        "subject": subject or "(无主题)",
-                        "from_name": from_name,
-                        "from_addr": from_addr,
-                        "date": date_formatted,
-                        "body": body,
-                    }
-                )
-        finally:
-            try:
-                conn.logout()
-            except Exception:
-                pass
-
-        return results
 
     # ── Lifecycle ────────────────────────────────────────────────
 
