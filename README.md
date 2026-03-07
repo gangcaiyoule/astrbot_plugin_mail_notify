@@ -2,7 +2,7 @@
 
 # 📬 邮件通知插件
 
-[![Plugin Version](https://img.shields.io/badge/Latest_Version-v1.0.3-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/gangcaiyoule/astrbot_plugin_mail_notify)
+[![Plugin Version](https://img.shields.io/badge/Latest_Version-v1.1.3-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/gangcaiyoule/astrbot_plugin_mail_notify)
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-ff69b4?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 
