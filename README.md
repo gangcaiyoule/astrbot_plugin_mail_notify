@@ -1,14 +1,197 @@
-# astrbot-plugin-helloworld
+# astrbot_plugin_mail_notify
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+📬 AstrBot 邮件通知插件 — 监控多个邮箱的新邮件，自动通过 QQ 私聊发送提醒通知。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+## ✨ 功能特性
 
-# Supports
+- **多邮箱监控** — 同时监控多个 IMAP 邮箱（Gmail、QQ 邮箱、163 邮箱、Outlook、校园邮箱等）
+- **自动推送** — 后台定时轮询（默认 5 分钟），收到新邮件时自动通过 QQ 私聊推送通知
+- **邮件摘要** — 通知包含发件人、主题、时间和正文预览
+- **AI 摘要**（可选）— 调用 LLM 对邮件内容生成简洁中文摘要
+- **手动查询** — 可按日期范围查询指定邮箱的历史邮件
+- **WebUI 配置** — 在 AstrBot 管理面板中可视化配置，无需修改代码
+- **智能过滤** — 只通知插件启用后收到的新邮件，不会推送历史旧邮件
+- **零额外依赖** — 使用 Python 标准库 `imaplib` 和 `email`，无需安装第三方包
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+## 📖 使用方法
+
+### 第一步：配置邮箱账户
+
+在 AstrBot WebUI → 插件管理 → 📬 邮件通知 → 配置中，点击「邮箱账户列表」添加邮箱：
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| 账户备注名 | 自定义名称，方便识别 | `qq邮箱` |
+| IMAP 服务器地址 | 邮箱的 IMAP 服务器 | `imap.qq.com` |
+| IMAP 端口 | SSL 通常为 993 | `993` |
+| 邮箱地址 | 你的邮箱地址 | `123456@qq.com` |
+| 密码/应用专用密码 | 见下方各邮箱获取方式 | `xxxxxxxxxxxxxxxx` |
+| 使用 SSL 连接 | 推荐开启 | `true` |
+
+可添加多个邮箱账户，每个账户独立监控。
+
+### 第二步：绑定 QQ 通知目标
+
+在 QQ **私聊**中给机器人发送：
+
+```
+/mail_bind
+```
+
+机器人会回复"✅ 已绑定"，之后新邮件通知就会发到这个私聊。
+
+### 第三步：验证
+
+```
+/mail_check
+```
+
+手动触发一次检查，确认邮箱连接正常。之后插件会自动后台轮询。
+
+## 📋 指令列表
+
+| 指令 | 说明 | 示例 |
+|------|------|------|
+| `/mail_bind` | 绑定当前会话为邮件通知推送目标 | `/mail_bind` |
+| `/mail_check` | 立即手动检查所有邮箱的新邮件 | `/mail_check` |
+| `/mail_status` | 查看所有邮箱的连接状态和最近检查时间 | `/mail_status` |
+| `/mail_query` | 查询指定邮箱自某日期以来的邮件（最多 20 条） | `/mail_query qq邮箱 2026-03-01` |
+
+### `/mail_query` 用法详解
+
+```
+/mail_query <账户备注名> <起始日期>
+```
+
+- `<账户备注名>`：你在配置中填写的名称，如 `qq邮箱`、`谷歌邮箱`
+- `<起始日期>`：格式为 `YYYY-MM-DD`，如 `2026-03-01`
+
+示例：
+```
+/mail_query qq邮箱 2026-03-01
+```
+
+会返回该邮箱自 2026 年 3 月 1 日以来的邮件列表。
+
+## 🔑 各邮箱密码/授权码获取方式
+
+> **重要：** 大多数邮箱不允许直接使用登录密码连接 IMAP，需要使用「应用专用密码」或「授权码」。
+
+### Gmail（谷歌邮箱）
+
+Gmail **必须使用应用专用密码**，普通登录密码无法连接 IMAP。
+
+1. 前往 [Google 账户安全设置](https://myaccount.google.com/security)
+2. 确保已开启**两步验证**（2-Step Verification）
+   - 如未开启：安全性 → 两步验证 → 添加手机号 → 完成验证
+3. 开启两步验证后，前往 [应用专用密码页面](https://myaccount.google.com/apppasswords)
+4. 输入应用名称（如 `AstrBot`）→ 点击「创建」
+5. 复制生成的 **16 位密码**（如 `abcd efgh ijkl mnop`）
+6. 将此密码填入插件配置的密码字段（空格可去可不去）
+
+> ⚠️ 应用专用密码只显示一次，关掉页面后无法再查看。如果忘了，删除后重新生成一个即可。
+
+> ⚠️ 在国内直连 `imap.gmail.com` 可能超时（被 GFW 屏蔽），需要代理或使用国内邮箱。
+
+### QQ 邮箱
+
+QQ 邮箱**必须使用授权码**，不能使用 QQ 密码。
+
+1. 登录 [QQ 邮箱网页版](https://mail.qq.com)
+2. 进入 **设置** → **账户**
+3. 找到「POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV 服务」
+4. 开启 **IMAP/SMTP 服务**
+5. 按提示用手机发送短信验证
+6. 验证成功后会显示一个 **16 位授权码**
+7. 将此授权码填入插件配置的密码字段
+
+### 163 邮箱（网易邮箱）
+
+163 邮箱**必须使用授权码**。
+
+1. 登录 [163 邮箱网页版](https://mail.163.com)
+2. 进入 **设置** → **POP3/SMTP/IMAP**
+3. 开启 **IMAP/SMTP 服务**
+4. 按提示设置授权码（需要手机验证）
+5. 将授权码填入插件配置的密码字段
+
+### Outlook / Hotmail（微软邮箱）
+
+Outlook 可以直接使用**账户登录密码**。
+
+- IMAP 服务器：`outlook.office365.com`
+- 端口：`993`
+- 密码：直接使用 Microsoft 账户密码
+
+> 如果账户开启了两步验证，也需要生成应用密码：[Microsoft 应用密码](https://account.live.com/proofs/AppPassword)
+
+### 校园邮箱
+
+各学校邮箱配置不同，一般步骤：
+
+1. 登录学校邮箱网页版
+2. 在设置中确认是否开启了 IMAP 服务（部分学校默认关闭）
+3. 查找 IMAP 服务器地址（通常为 `imap.xxx.edu.cn`）
+4. 密码通常使用邮箱登录密码
+
+常见校园邮箱配置示例：
+
+| 学校 | IMAP 服务器 | 端口 |
+|------|------------|------|
+| 杭电 | `imap.hdu.edu.cn` | 993 |
+| 浙大 | `imap.zju.edu.cn` | 993 |
+
+> 如果连接失败，请联系学校信息中心确认是否开放了 IMAP 服务。
+
+## ⚙️ 其他配置项
+
+在 WebUI 插件配置中还可以调整：
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| 检查间隔（分钟） | 5 | 后台轮询间隔，建议不低于 2 分钟 |
+| 启用 AI 摘要 | 关闭 | 开启后使用 LLM 对邮件生成中文摘要 |
+| 邮件正文最大截取长度 | 500 | 预览或 AI 摘要输入的正文字符数上限 |
+
+## 📬 通知效果示例
+
+```
+📬 新邮件通知 [qq邮箱]
+━━━━━━━━━━━━━━━━
+📤 发件人: 张三 <zhangsan@example.com>
+📋 主题: 关于项目进度汇报
+🕐 时间: 2026-03-07 14:30
+📝 预览: 你好，本周项目已完成模块A的开发...
+```
+
+开启 AI 摘要后：
+
+```
+📬 新邮件通知 [qq邮箱]
+━━━━━━━━━━━━━━━━
+📤 发件人: 张三 <zhangsan@example.com>
+📋 主题: 关于项目进度汇报
+🕐 时间: 2026-03-07 14:30
+📝 AI摘要: 通知项目进度：模块A已完成开发，下周将进入测试阶段。
+```
+
+## 🔧 常见问题
+
+**Q: 连接超时 (timed out)？**
+- Gmail: 在国内被墙，需要代理或改用国内邮箱
+- 其他邮箱: 检查 IMAP 服务器地址和端口是否正确，确认邮箱已开启 IMAP 服务
+
+**Q: 认证失败 (LOGIN failed)？**
+- 检查密码是否正确，Gmail 和 QQ 邮箱不能使用登录密码，必须使用应用专用密码/授权码
+- QQ 邮箱确认已开启 IMAP 服务
+
+**Q: 收到了很多旧邮件通知？**
+- 插件已加入日期过滤机制，只通知启用后收到的新邮件。如仍有问题，在 WebUI 中重载插件即可
+
+**Q: 后台不自动检查？**
+- 确认已通过 `/mail_bind` 绑定通知目标
+- 通过 `/mail_status` 查看状态
+
+## License
+
+MIT

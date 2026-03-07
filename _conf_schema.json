@@ -1,0 +1,73 @@
+{
+  "mail_accounts": {
+    "type": "template_list",
+    "description": "邮箱账户列表",
+    "hint": "添加你要监控的邮箱账户，支持 Gmail、杭电邮箱、QQ 邮箱等所有支持 IMAP 的邮箱",
+    "templates": {
+      "imap_account": {
+        "name": "IMAP 邮箱账户",
+        "hint": "填写邮箱的 IMAP 连接信息",
+        "items": {
+          "name": {
+            "description": "账户备注名",
+            "type": "string",
+            "default": "",
+            "hint": "例如：谷歌邮箱、杭电邮箱"
+          },
+          "imap_server": {
+            "description": "IMAP 服务器地址",
+            "type": "string",
+            "default": "",
+            "hint": "例如：imap.gmail.com、imap.hdu.edu.cn、imap.qq.com"
+          },
+          "imap_port": {
+            "description": "IMAP 端口",
+            "type": "int",
+            "default": 993,
+            "hint": "SSL 连接通常为 993"
+          },
+          "email": {
+            "description": "邮箱地址",
+            "type": "string",
+            "default": ""
+          },
+          "password": {
+            "description": "密码/应用专用密码",
+            "type": "string",
+            "default": "",
+            "hint": "Gmail 需使用应用专用密码，QQ 邮箱需使用授权码"
+          },
+          "use_ssl": {
+            "description": "使用 SSL 连接",
+            "type": "bool",
+            "default": true
+          }
+        }
+      }
+    }
+  },
+  "check_interval": {
+    "description": "检查间隔（分钟）",
+    "type": "int",
+    "default": 5,
+    "hint": "每隔多少分钟检查一次新邮件，建议不低于 2 分钟"
+  },
+  "notify_umo": {
+    "description": "通知目标会话 ID",
+    "type": "string",
+    "default": "",
+    "hint": "通过 /mail_bind 指令在 QQ 私聊中自动绑定，也可手动填写 unified_msg_origin"
+  },
+  "ai_summary": {
+    "description": "启用 AI 摘要",
+    "type": "bool",
+    "default": false,
+    "hint": "启用后将调用 LLM 对邮件内容生成简洁摘要再推送"
+  },
+  "max_body_length": {
+    "description": "邮件正文最大截取长度",
+    "type": "int",
+    "default": 500,
+    "hint": "截取邮件正文的最大字符数，用于预览或 AI 摘要输入"
+  }
+}
