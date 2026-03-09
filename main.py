@@ -12,18 +12,21 @@ from .imap_client import imap_fetch_new, imap_query_since, is_recent_email
     "astrbot_plugin_mail_notify",
     "YourName",
     "监控邮箱新邮件并通过 QQ 私聊发送通知",
-    "1.0.0",
+    "1.1.3",
 )
 class MailNotifyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        # Background polling task created during initialize().
         self._check_task: asyncio.Task | None = None
+        # Runtime-only status used by /mail_status; not persisted.
         self._last_check_time: dict[str, str] = {}
         self._account_status: dict[str, str] = {}
 
     async def initialize(self):
         """Called after plugin instantiation, start background mail check loop."""
+        # The plugin starts its own polling loop after AstrBot loads it.
         self._check_task = asyncio.create_task(self._check_loop())
         logger.info("MailNotify: background check loop started.")
 
@@ -35,12 +38,15 @@ class MailNotifyPlugin(Star):
             try:
                 interval = self.config.get("check_interval", 5)
                 notify_umo = self.config.get("notify_umo", "")
+                # Poll only after a target conversation is bound.
                 if notify_umo:
                     accounts = self.config.get("mail_accounts", [])
                     for account in accounts:
                         if not account.get("email") or not account.get("imap_server"):
                             continue
                         try:
+                            # Each account is checked independently so one failure
+                            # does not block the others.
                             await self._check_account(account, notify_umo)
                             self._account_status[account["email"]] = "✅ 正常"
                         except Exception as e:
@@ -61,24 +67,30 @@ class MailNotifyPlugin(Star):
     # ── IMAP Logic ───────────────────────────────────────────────
 
     async def _check_account(self, account: dict, notify_umo: str):
+        # Every mailbox has its own persisted keys so multiple accounts do not clash.
         account_email = account["email"]
         max_body_len = self.config.get("max_body_length", 500)
 
         uid_key = f"last_uid_{account_email}"
         init_key = f"init_time_{account_email}"
+        # KV data is stored by AstrBot in data/data_v4.db.
         last_uid = await self.get_kv_data(uid_key, 0) or 0
         init_time = await self.get_kv_data(init_key, "")
 
         is_first_run = not init_time
         if is_first_run:
+            # First run records the start time and current UID baseline,
+            # preventing old inbox history from being pushed as new mail.
             init_time = datetime.now(timezone.utc).isoformat()
             await self.put_kv_data(init_key, init_time)
 
+        # imaplib is blocking, so the actual mailbox query runs in a worker thread.
         new_emails, new_max_uid = await asyncio.to_thread(
             imap_fetch_new, account, last_uid, max_body_len
         )
 
         if new_max_uid > last_uid:
+            # Persist the newest UID after a successful fetch for next incremental sync.
             await self.put_kv_data(uid_key, new_max_uid)
 
         if is_first_run:
@@ -90,6 +102,8 @@ class MailNotifyPlugin(Star):
 
         init_dt = datetime.fromisoformat(init_time)
         for mail_info in new_emails:
+            # Double-check the parsed mail date against init_time to avoid edge cases
+            # where a just-fetched mail still belongs to the historical backlog.
             if is_recent_email(mail_info, init_dt):
                 await self._send_notification(account, mail_info, notify_umo)
 
@@ -100,11 +114,11 @@ class MailNotifyPlugin(Star):
         use_ai = self.config.get("ai_summary", False)
         body_text = mail_info["body"]
 
-        # Optional AI summary
+        # Optional AI summary replaces the raw preview text when enabled.
         if use_ai and body_text:
             body_text = await self._try_ai_summary(mail_info, notify_umo, body_text)
 
-        # Build notification text
+        # Build a plain text message and let AstrBot deliver it to the bound session.
         lines = [
             f"📬 新邮件通知 [{account_name}]",
             "━━━━━━━━━━━━━━━━",
@@ -125,6 +139,7 @@ class MailNotifyPlugin(Star):
         self, mail_info: dict, notify_umo: str, fallback: str
     ) -> str:
         try:
+            # Reuse the chat provider already bound to the target conversation.
             provider_id = await self.context.get_current_chat_provider_id(
                 umo=notify_umo
             )
@@ -151,6 +166,7 @@ class MailNotifyPlugin(Star):
     async def mail_bind(self, event: AstrMessageEvent):
         """绑定当前会话为邮件通知目标"""
         umo = event.unified_msg_origin
+        # This is regular plugin config, not KV state, so it is saved in config files.
         self.config["notify_umo"] = umo
         self.config.save_config()
         yield event.plain_result(f"✅ 已绑定当前会话为邮件通知目标。\n会话 ID: {umo}")
@@ -158,6 +174,7 @@ class MailNotifyPlugin(Star):
     @filter.command("mail_status")
     async def mail_status(self, event: AstrMessageEvent):
         """查看所有邮箱的监控状态"""
+        # Read current config plus runtime cache to render a status snapshot.
         accounts = self.config.get("mail_accounts", [])
         notify_umo = self.config.get("notify_umo", "")
         interval = self.config.get("check_interval", 5)
@@ -197,6 +214,7 @@ class MailNotifyPlugin(Star):
         notify_umo = self.config.get("notify_umo", "") or event.unified_msg_origin
         yield event.plain_result("🔍 正在检查所有邮箱...")
 
+        # Manual check reuses the same account-checking path as the background loop.
         errors = []
         for account in accounts:
             if not account.get("email") or not account.get("imap_server"):
@@ -224,7 +242,7 @@ class MailNotifyPlugin(Star):
         """查询指定邮箱自某日期以来的邮件，如 /mail_query qq邮箱 2026-03-01"""
         accounts = self.config.get("mail_accounts", [])
 
-        # Find matching account by name or email
+        # Resolve the target account by either display name or full email address.
         target = None
         for acc in accounts:
             name = acc.get("name", "")
@@ -239,7 +257,7 @@ class MailNotifyPlugin(Star):
             )
             return
 
-        # Validate date
+        # The command accepts only YYYY-MM-DD to keep parsing deterministic.
         try:
             since_dt = datetime.strptime(since_date, "%Y-%m-%d")
         except ValueError:
@@ -254,6 +272,7 @@ class MailNotifyPlugin(Star):
 
         try:
             max_body_len = self.config.get("max_body_length", 500)
+            # History query also uses a worker thread because IMAP access is blocking.
             emails = await asyncio.to_thread(
                 imap_query_since, target, since_dt, max_body_len
             )
