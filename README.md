@@ -2,7 +2,7 @@
 
 # 📬 邮件通知插件
 
-[![Plugin Version](https://img.shields.io/badge/Latest_Version-v1.3.4-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/gangcaiyoule/astrbot_plugin_mail_notify)
+[![Plugin Version](https://img.shields.io/badge/Latest_Version-v1.3.5-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/gangcaiyoule/astrbot_plugin_mail_notify)
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-ff69b4?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-AGPL-green.svg?style=for-the-badge)](LICENSE)
 
@@ -21,6 +21,7 @@ _✨ 监控多个 IMAP 邮箱的新邮件，通过 AstrBot 自动推送通知，
 - **手动查询** — 可按日期范围查询指定邮箱的历史邮件
 - **手动回复** — 在聊天里通过指令手动发送邮件回复（基于 SMTP）
 - **WebUI 配置** — 在 AstrBot 管理面板中可视化配置，无需修改代码
+- **对话上下文注入**（可选）— 将已推送通知放入同一会话的下一次 AI 对话
 - **智能过滤** — 只通知插件启用后收到的新邮件，不会推送历史旧邮件
 - **零额外依赖** — 使用 Python 标准库 `imaplib`、`smtplib` 和 `email`，无需安装第三方包
 
@@ -239,8 +240,15 @@ Outlook 可以直接使用**账户登录密码**。
 |--------|--------|------|
 | 检查间隔（分钟） | 5 | 后台轮询间隔，建议不低于 2 分钟 |
 | 启用 AI 摘要 | 关闭 | 开启后使用 LLM 对邮件生成中文摘要 |
+| 把新邮件通知加入下次 AI 对话 | 关闭 | 最多保留最近 5 条通知，在同一会话的下一次 LLM 请求中注入；邮件信息会发送给当前模型提供商 |
 | 邮件正文最大截取长度 | 500 | 预览或 AI 摘要输入的正文字符数上限 |
 | 通知显示时区 | `Asia/Shanghai` | 前端下拉可直接选择常见时区；若选择“自定义时区”，再填写 IANA 时区名称，例如 `Asia/Singapore`、`Australia/Sydney` |
+
+### 对话上下文注入与测试
+
+在 AstrBot WebUI → 插件管理 → 📬 邮件通知 → 配置中开启「把新邮件通知加入下次 AI 对话」。插件在通知**成功推送后**排队；只把通知交给相同会话的下一次 LLM 请求，最多保留最近 5 条。使用 AI 摘要时，注入的是摘要版通知；每条注入文本最多 2000 字符。队列仅在内存中保存，插件重载或重启后会清空。关闭开关时不注入邮件通知。
+
+测试时，先确保邮箱已完成首次检查（首次检查只建立基线），给它发送一封新测试邮件，再用 `/mail_check` 触发检查。确认消息平台收到通知后，在**绑定的同一个会话**向机器人发送普通问题，例如「刚才的邮件主题是什么？」。日志应依次出现「通知已排队待注入」和「已注入 1 条邮件通知到 LLM 请求」。在其他会话提问不应消费该通知；同一会话第二次提问不应再次注入。测试完可以在 WebUI 关闭开关。
 
 ## 📬 通知效果示例
 
@@ -287,6 +295,10 @@ Outlook 可以直接使用**账户登录密码**。
 - 确认收件人邮箱格式正确，主题与正文不为空
 
 ## 📦 版本更新日志
+### v1.3.5
+- WebUI 增加可选的邮件通知上下文注入开关，同会话下一次 AI 对话可读取已推送通知
+- 增加每会话 5 条待注入上限和 2000 字符单条上限
+
 ### v1.3
 - 添加黑白名单规则
 - 时区时间转化

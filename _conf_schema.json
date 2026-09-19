@@ -139,6 +139,12 @@
     "default": false,
     "hint": "启用后将先生成简短摘要，再发送邮件通知"
   },
+  "inject_to_context": {
+    "description": "把新邮件通知加入下次 AI 对话",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，已推送的通知会在同一会话的下一次 LLM 请求中发送给模型；最多保留最近 5 条。启用 AI 摘要时注入的是摘要版通知。邮件内容可能包含隐私信息，请确认所用模型可接收后再开启。"
+  },
   "blacklist_settings": {
     "description": "黑名单设置",
     "type": "object",
