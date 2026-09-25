@@ -70,11 +70,82 @@
       }
     }
   },
+  "proxy_settings": {
+    "description": "SOCKS 代理（仅用于 IMAP 收信）",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用代理",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后所有 IMAP 收信都会经过下方代理服务器；SMTP 发信不受影响"
+      },
+      "type": {
+        "description": "代理类型",
+        "type": "string",
+        "default": "socks5",
+        "options": [
+          "socks5",
+          "socks4",
+          "http"
+        ],
+        "hint": "socks5 最常用（SSH 动态转发 1080、Clash 7890 等）；需代理支持 SOCKS5 认证时会用到下方用户名密码"
+      },
+      "host": {
+        "description": "代理服务器地址",
+        "type": "string",
+        "default": "",
+        "hint": "例如 127.0.0.1 或 192.168.1.10"
+      },
+      "port": {
+        "description": "代理服务器端口",
+        "type": "int",
+        "default": 1080,
+        "hint": "SOCKS5 常用 1080，Clash 常用 7890"
+      },
+      "username": {
+        "description": "代理用户名",
+        "type": "string",
+        "default": "",
+        "hint": "代理免认证时留空"
+      },
+      "password": {
+        "description": "代理密码",
+        "type": "string",
+        "default": "",
+        "hint": "代理免认证时留空"
+      }
+    }
+  },
+  "idle_settings": {
+    "description": "实时监听（IMAP IDLE）",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用实时监听",
+        "type": "bool",
+        "default": true,
+        "hint": "保持长连接，服务器推送新邮件时立即检查；不支持 IDLE 的邮箱会自动回退为轮询"
+      },
+      "safety_poll_interval": {
+        "description": "兜底轮询间隔（分钟）",
+        "type": "int",
+        "default": 15,
+        "hint": "实时监听期间的定期兜底检查，防止长连接静默失效导致漏邮件，建议不低于 15 分钟"
+      },
+      "refresh_minutes": {
+        "description": "IDLE 保活周期（分钟）",
+        "type": "int",
+        "default": 25,
+        "hint": "RFC 2177 建议不超过 30 分钟，到期后重发一次 IDLE 保活"
+      }
+    }
+  },
   "check_interval": {
     "description": "检查间隔（分钟）",
     "type": "int",
     "default": 5,
-    "hint": "每隔多少分钟检查一次新邮件，建议不低于 2 分钟"
+    "hint": "仅对未启用实时监听的账户生效；启用了实时监听的账户改用上面的兜底轮询间隔，建议不低于 2 分钟"
   },
   "display_timezone": {
     "description": "通知显示时区",
