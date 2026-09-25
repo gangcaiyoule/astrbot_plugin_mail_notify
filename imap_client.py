@@ -6,19 +6,34 @@ from email.utils import parseaddr, parsedate_to_datetime
 from .mail_utils import decode_mime_header, extract_text_body, truncate_text
 from .network_utils import open_tcp_socket
 
-# 本模块封装所有与 IMAP 服务器交互的同步操作。
+# 本模块封装轮询式的 IMAP 同步操作。
 # 由于 imaplib 是阻塞式 I/O，调用方需通过 asyncio.to_thread() 在线程池中执行这些函数，
 # 避免阻塞 asyncio 事件循环。
+# 基于 IDLE 的实时监听另见 imap_idle.py（它会长期占用一个专用线程）。
 
 
 class _IMAP4PreferredIPv4(imaplib.IMAP4):
+    """Plain IMAP4 connection preferring IPv4, optionally through a proxy."""
+
+    def __init__(self, *args, proxy: dict | None = None, **kwargs):
+        # Store the proxy before super().__init__() opens the socket, so that
+        # _create_socket() can pick it up.
+        self._proxy = proxy
+        super().__init__(*args, **kwargs)
+
     def _create_socket(self, timeout):
-        return open_tcp_socket(self.host, self.port, timeout=timeout)
+        return open_tcp_socket(self.host, self.port, timeout=timeout, proxy=self._proxy)
 
 
 class _IMAP4SSLPreferredIPv4(imaplib.IMAP4_SSL):
+    """IMAP4_SSL connection preferring IPv4, optionally through a proxy."""
+
+    def __init__(self, *args, proxy: dict | None = None, **kwargs):
+        self._proxy = proxy
+        super().__init__(*args, **kwargs)
+
     def _create_socket(self, timeout):
-        sock = open_tcp_socket(self.host, self.port, timeout=timeout)
+        sock = open_tcp_socket(self.host, self.port, timeout=timeout, proxy=self._proxy)
         return self.ssl_context.wrap_socket(sock, server_hostname=self.host)
 
 
@@ -51,11 +66,14 @@ def is_recent_email(mail_info: dict, init_dt: datetime) -> bool:
         return True
 
 
-def _connect(account: dict) -> imaplib.IMAP4 | imaplib.IMAP4_SSL:
+def _connect(
+    account: dict, proxy: dict | None = None
+) -> imaplib.IMAP4 | imaplib.IMAP4_SSL:
     """根据账户配置建立 IMAP 连接并完成认证，返回已选中 INBOX 的连接对象。
 
     Args:
         account: 包含 imap_server、imap_port、use_ssl、email、password 的账户配置字典。
+        proxy:   parse_socks_proxy() 生成的代理描述，None 表示直连。
 
     Returns:
         已登录并选中 INBOX（只读模式）的 IMAP 连接对象。
@@ -66,9 +84,9 @@ def _connect(account: dict) -> imaplib.IMAP4 | imaplib.IMAP4_SSL:
 
     # 根据是否启用 SSL 选择对应的连接类，超时设置为 30 秒
     if use_ssl:
-        conn = _IMAP4SSLPreferredIPv4(server, port, timeout=30)
+        conn = _IMAP4SSLPreferredIPv4(server, port, timeout=30, proxy=proxy)
     else:
-        conn = _IMAP4PreferredIPv4(server, port, timeout=30)
+        conn = _IMAP4PreferredIPv4(server, port, timeout=30, proxy=proxy)
 
     conn.login(account["email"], account["password"])
 
@@ -151,6 +169,7 @@ def imap_fetch_new(
     last_uid: int,
     preview_body_len: int,
     filter_body_len: int | None = None,
+    proxy: dict | None = None,
 ) -> tuple[list[dict], int]:
     """基于 UID 增量拉取收件箱中的新邮件。同步函数，调用方应通过 asyncio.to_thread() 执行。
 
@@ -165,11 +184,12 @@ def imap_fetch_new(
         last_uid:     上次成功处理的最大邮件 UID，存储于 KV 数据库（data/data_v4.db）。
         preview_body_len: Maximum number of body characters used in notifications.
         filter_body_len:  Maximum number of body characters used for filtering.
+        proxy:        代理描述，None 表示直连。
 
     Returns:
         (new_emails, new_max_uid)：新邮件列表 与 本次处理后的最大 UID。
     """
-    conn = _connect(account)
+    conn = _connect(account, proxy)
     new_emails: list[dict] = []
     new_max_uid = last_uid
 
@@ -206,9 +226,7 @@ def imap_fetch_new(
             if not isinstance(raw, bytes):
                 continue
             msg = email_lib.message_from_bytes(raw)
-            new_emails.append(
-                _parse_email(msg, uid, preview_body_len, filter_body_len)
-            )
+            new_emails.append(_parse_email(msg, uid, preview_body_len, filter_body_len))
     finally:
         # 无论成功或异常，确保 IMAP 连接被正常关闭
         try:
@@ -220,7 +238,10 @@ def imap_fetch_new(
 
 
 def imap_query_since(
-    account: dict, since_dt: datetime, max_body_len: int
+    account: dict,
+    since_dt: datetime,
+    max_body_len: int,
+    proxy: dict | None = None,
 ) -> list[dict]:
     """查询指定日期之后的邮件列表，供 /mail_query 指令使用。同步函数，调用方应通过 asyncio.to_thread() 执行。
 
@@ -231,11 +252,12 @@ def imap_query_since(
         account:      账户配置字典。
         since_dt:     查询起始日期（含当天），由 /mail_query 指令传入。
         max_body_len: 正文截取最大字符数。
+        proxy:        代理描述，None 表示直连。
 
     Returns:
         满足条件的邮件字典列表，按 UID 升序排列（最多 20 封）。
     """
-    conn = _connect(account)
+    conn = _connect(account, proxy)
     results: list[dict] = []
 
     try:
