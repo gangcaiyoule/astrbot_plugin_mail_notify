@@ -368,6 +368,7 @@ class MailNotifyPlugin(Star):
             prompt_items = []
             for idx, mail_info in enumerate(notify_emails, 1):
                 sender_display = self._format_sender_display(mail_info)
+                display_time = self._format_mail_time(mail_info)
                 subject = mail_info.get("subject") or "(无主题)"
                 truncated_body = truncate_text(
                     mail_info.get("body") or "", per_mail_budget
@@ -375,6 +376,7 @@ class MailNotifyPlugin(Star):
                 prompt_items.append(
                     f"【邮件 {idx}】\n"
                     f"发件人：{sender_display}\n"
+                    f"时间：{display_time}\n"
                     f"主题：{subject}\n"
                     f"正文：{truncated_body or '(无正文)'}"
                 )
@@ -382,7 +384,7 @@ class MailNotifyPlugin(Star):
             prompt = (
                 f"请用简洁的中文对以下 {len(notify_emails)} 封新邮件进行汇总摘要。\n"
                 "要求：\n"
-                "1. 先用一句话概括这批邮件的整体重点；\n"
+                "1. 先结合各邮件的时间先后关系，用一句话概括这批邮件的整体重点；\n"
                 "2. 再按序号（1. 2. ...）为每封邮件提供不超过50字的简短摘要；\n"
                 "3. 只输出摘要内容，不要输出多余说明：\n\n"
                 + "\n\n".join(prompt_items)
