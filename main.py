@@ -300,33 +300,94 @@ class MailNotifyPlugin(Star):
         use_ai = bool(self.config.get("ai_summary", False))
         per_mail_budget = self._get_per_mail_batch_budget(len(notify_emails))
 
-        batch_summary = None
+        overview = ""
+        item_summaries: dict[int, str] = {}
         if use_ai and any(m.get("body") for m in notify_emails):
             batch_summary = await self._try_batch_ai_summary(
                 notify_emails, notify_umo, per_mail_budget
             )
+            if batch_summary:
+                overview, item_summaries = self._parse_batch_ai_summary(
+                    batch_summary, len(notify_emails)
+                )
 
         lines = [
             f"📬 新邮件汇总通知 [{account_name}] (共 {len(notify_emails)} 封)",
-            "━━━━━━━━━━━━━━━━",
         ]
+        if overview:
+            lines.append(f"💡 AI汇总: {overview}")
+        lines.append("━━━━━━━━━━━━━━━━")
+
+        item_blocks: list[str] = []
         for idx, mail_info in enumerate(notify_emails, 1):
             display_time = self._format_mail_time(mail_info)
             sender_display = self._format_sender_display(mail_info)
-            lines.append(f"{idx}. 📋 {mail_info['subject']}")
-            lines.append(f"   📤 发件人: {sender_display}")
-            lines.append(f"   🕐 时间: {display_time}")
-            if not batch_summary:
+            block_lines = [
+                f"【{idx}】📋 {mail_info['subject']}",
+                f"📤 发件人: {sender_display}",
+                f"🕐 时间: {display_time}",
+            ]
+            ai_item_text = item_summaries.get(idx, "")
+            if ai_item_text:
+                block_lines.append(f"📝 AI摘要: {ai_item_text}")
+            else:
                 preview = truncate_text(mail_info.get("body") or "", per_mail_budget)
                 if preview:
-                    lines.append(f"   📝 预览: {preview}")
+                    block_lines.append(f"📝 预览: {preview}")
+            item_blocks.append("\n".join(block_lines))
 
-        if batch_summary:
-            lines.append("━━━━━━━━━━━━━━━━")
-            lines.append(f"📝 AI汇总摘要:\n{batch_summary}")
+        lines.append("\n\n".join(item_blocks))
 
         chain = MessageChain().message("\n".join(lines))
         await self.context.send_message(notify_umo, chain)
+
+    @staticmethod
+    def _parse_batch_ai_summary(
+        raw_text: str, mail_count: int
+    ) -> tuple[str, dict[int, str]]:
+        overview_lines: list[str] = []
+        item_summaries: dict[int, str] = {}
+        current_idx: int | None = None
+
+        item_pattern = re.compile(
+            r"^(?:【\s*(?:邮件\s*)?(\d+)\s*】|\[\s*(?:邮件\s*)?(\d+)\s*\]|(?:邮件\s*)?(\d+)\s*[.、:：)])\s*(.*)$"
+        )
+        overview_prefix = re.compile(
+            r"^(?:(?:AI)?(?:整体)?汇总(?:摘要)?|整体(?:重点|概括)|总结|概述)\s*[:：]\s*(.*)$",
+            re.IGNORECASE,
+        )
+
+        for raw_line in (raw_text or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            cleaned = re.sub(r"^[-*•]+\s*", "", line).replace("**", "").strip()
+
+            m_item = item_pattern.match(cleaned)
+            if m_item:
+                idx_str = m_item.group(1) or m_item.group(2) or m_item.group(3)
+                idx = int(idx_str)
+                if 1 <= idx <= mail_count:
+                    current_idx = idx
+                    item_summaries[idx] = m_item.group(4).strip()
+                    continue
+
+            m_ov = overview_prefix.match(cleaned)
+            if m_ov:
+                current_idx = None
+                content = m_ov.group(1).strip()
+                if content:
+                    overview_lines.append(content)
+                continue
+
+            if current_idx is not None:
+                prev = item_summaries.get(current_idx, "")
+                item_summaries[current_idx] = f"{prev} {cleaned}".strip()
+            else:
+                overview_lines.append(cleaned)
+
+        overview = " ".join(overview_lines).strip()
+        return overview, item_summaries
 
     async def _try_ai_summary(
         self, mail_info: dict, notify_umo: str, fallback: str
@@ -383,10 +444,11 @@ class MailNotifyPlugin(Star):
 
             prompt = (
                 f"请用简洁的中文对以下 {len(notify_emails)} 封新邮件进行汇总摘要。\n"
-                "要求：\n"
-                "1. 先结合各邮件的时间先后关系，用一句话概括这批邮件的整体重点；\n"
-                "2. 再按序号（1. 2. ...）为每封邮件提供不超过50字的简短摘要；\n"
-                "3. 只输出摘要内容，不要输出多余说明：\n\n"
+                "请严格按以下格式输出（不要使用 Markdown 有序列表，只输出以下内容）：\n"
+                "汇总：<结合各邮件的时间先后关系，用一句话概括这批邮件的整体重点>\n"
+                "【1】<第1封邮件不超过50字的简短摘要>\n"
+                "【2】<第2封邮件不超过50字的简短摘要>\n"
+                "（以此类推，每封邮件一行，序号与邮件编号严格对应）\n\n"
                 + "\n\n".join(prompt_items)
             )
             llm_resp = await self.context.llm_generate(
