@@ -139,6 +139,12 @@
     "default": false,
     "hint": "启用后将先生成简短摘要，再发送邮件通知"
   },
+  "aggregate_notifications": {
+    "description": "启用多邮件聚合推送",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，同一邮箱单次检查出多封新邮件时将合并为一条消息推送；仅有一封新邮件时仍保持单封推送格式"
+  },
   "blacklist_settings": {
     "description": "黑名单设置",
     "type": "object",
@@ -204,6 +210,12 @@
     "type": "int",
     "default": 500,
     "hint": "通知中展示的正文字符上限，也会用于 AI 摘要输入"
+  },
+  "max_batch_ai_input_length": {
+    "description": "聚合 AI 摘要最大总输入长度",
+    "type": "int",
+    "default": 3000,
+    "hint": "多邮件聚合且启用 AI 摘要时，传给模型的总正文字符上限，防止邮件过多超出模型上下文限制"
   },
   "filter_body_length": {
     "description": "正文过滤最大长度",
